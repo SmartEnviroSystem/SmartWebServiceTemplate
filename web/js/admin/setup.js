@@ -13,6 +13,7 @@ window['select_target_options'] = {
                 get: ['GET', 'records'],
                 list: ['GET', 'records'],
                 defs: ['GET', 'collection'],
+                cdefs: ['POST', 'collection'],
                 create: ['POST', 'records'],
                 update: ['PUT', 'records'],
                 delete: ['DELETE', 'records']
