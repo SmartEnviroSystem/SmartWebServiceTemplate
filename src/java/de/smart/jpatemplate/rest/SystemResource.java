@@ -4,6 +4,10 @@ import de.fhbielefeld.scl.logger.Logger;
 import de.fhbielefeld.scl.logger.LoggerException;
 import de.fhbielefeld.scl.rest.util.ResponseObjectBuilder;
 import de.smart.jpatemplate.config.Configuration;
+import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -21,6 +25,11 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.StringReader;
+import java.net.HttpURLConnection;
+import java.util.Base64;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.media.Content;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
@@ -200,6 +209,128 @@ public class SystemResource {
         rob.setStatus(Response.Status.OK);
 
         return rob.toResponse();
+    }
+    
+    @GET
+    @Path("jdbcresources")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getJdbcResources() {
+
+        try {
+            // URL zur Payara Management API
+            String url = "http://localhost:4848/management/domain/resources/jdbc-resource";
+
+            // Open connection
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+
+            // Set header
+            conn.setRequestProperty("X-Requested-By", "GlassFish REST HTML interface");
+            conn.setRequestProperty("Accept", "application/json");
+
+            // Basic Auth
+            Configuration conf = new Configuration();
+            String adminUser = conf.getProperty("payara_admin_user");
+            if (adminUser != null) {
+                String user = adminUser;
+                String pass = conf.getProperty("payara_admin_pwd");
+
+                String basicAuth = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes());
+                conn.setRequestProperty("Authorization", "Basic " + basicAuth);
+            }
+            // Get response
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder response = new StringBuilder();
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+
+            // Parse JSON
+            JsonObject json = Json.createReader(new StringReader(response.toString())).readObject();
+
+            // Navigate to extraProperties.childResources
+            JsonObject extraProps = json.getJsonObject("extraProperties");
+            JsonObject childResources = extraProps.getJsonObject("childResources");
+
+            // Extract keys (JNDI names)
+            JsonArrayBuilder arr = Json.createArrayBuilder();
+            for (String key : childResources.keySet()) {
+                JsonObjectBuilder obj = Json.createObjectBuilder();
+                obj.add("name", key);
+                obj.add("value", key);
+                arr.add(obj);
+            }
+            return Response.ok(arr.build().toString()).build();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity("{\"error\":\"" + e.getMessage() + "\"}")
+                    .build();
+        }
+    }
+    
+    @GET
+    @Path("apps")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getApps() {
+
+        try {
+            // URL zur Payara Management API
+            String url = "http://localhost:4848/management/domain/applications/application";
+
+            // Open connection
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+
+            // Set header
+            conn.setRequestProperty("X-Requested-By", "GlassFish REST HTML interface");
+            conn.setRequestProperty("Accept", "application/json");
+
+            // Basic Auth
+            Configuration conf = new Configuration();
+            String adminUser = conf.getProperty("payara_admin_user");
+            if (adminUser != null) {
+                String user = adminUser;
+                String pass = conf.getProperty("payara_admin_pwd");
+
+                String basicAuth = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes());
+                conn.setRequestProperty("Authorization", "Basic " + basicAuth);
+            }
+            // Get response
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder response = new StringBuilder();
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+
+            // Parse JSON
+            JsonObject json = Json.createReader(new StringReader(response.toString())).readObject();
+
+            // Navigate to extraProperties.childResources
+            JsonObject extraProps = json.getJsonObject("extraProperties");
+            JsonObject childResources = extraProps.getJsonObject("childResources");
+
+            // Extract keys (JNDI names)
+            JsonArrayBuilder arr = Json.createArrayBuilder();
+            for (String key : childResources.keySet()) {
+                JsonObjectBuilder obj = Json.createObjectBuilder();
+                obj.add("name", key);
+                obj.add("value", key);
+                arr.add(obj);
+            }
+            return Response.ok(arr.build().toString()).build();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity("{\"error\":\"" + e.getMessage() + "\"}")
+                    .build();
+        }
     }
     
     @GET
