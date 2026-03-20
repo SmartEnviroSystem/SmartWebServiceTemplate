@@ -5,6 +5,7 @@ import de.fhbielefeld.scl.logger.LoggerException;
 import de.fhbielefeld.scl.rest.util.ResponseObjectBuilder;
 import de.smart.jpatemplate.config.Configuration;
 import jakarta.json.Json;
+import jakarta.json.JsonArray;
 import jakarta.json.JsonArrayBuilder;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
@@ -29,6 +30,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.net.HttpURLConnection;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.media.Content;
@@ -276,60 +278,76 @@ public class SystemResource {
     @Path("apps")
     @Produces(MediaType.APPLICATION_JSON)
     public Response getApps() {
-
+        System.out.println("getApps()");
         try {
-            // URL zur Payara Management API
-            String url = "http://localhost:4848/management/domain/applications/application";
+            String mgmtUrl = "https://localhost:4848/management/domain/applications/application";
 
-            // Open connection
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setRequestMethod("GET");
-
-            // Set header
-            conn.setRequestProperty("X-Requested-By", "GlassFish REST HTML interface");
-            conn.setRequestProperty("Accept", "application/json");
-
-            // Basic Auth
-            Configuration conf = new Configuration();
+            // Konfiguration einmal laden
+            de.smart.config.Configuration conf = new de.smart.config.Configuration();
             String adminUser = conf.getProperty("payara_admin_user");
-            if (adminUser != null) {
-                String user = adminUser;
-                String pass = conf.getProperty("payara_admin_pwd");
-
-                String basicAuth = Base64.getEncoder().encodeToString((user + ":" + pass).getBytes());
-                conn.setRequestProperty("Authorization", "Basic " + basicAuth);
+            String adminPwd = conf.getProperty("payara_admin_pwd");
+            JsonObject mgmtJson = tryFetchJsonWithAuth(mgmtUrl, adminUser, adminPwd);
+            if (mgmtJson != null) {
+                return Response.ok(processManagementJson(mgmtJson).toString()).build();
             }
-            // Get response
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String line;
+            // Fallback: SmartData Root prüfen (ohne Auth)
+            if (isReachable("http://localhost:8080/SmartData/")) {
+                JsonArray arr = Json.createArrayBuilder()
+                        .add(Json.createObjectBuilder()
+                                .add("name", "SmartData")
+                                .add("value", "SmartData")
+                                .add("type", "SmartData"))
+                        .build();
 
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
+                return Response.ok(arr.toString()).build();
             }
 
-            // Parse JSON
-            JsonObject json = Json.createReader(new StringReader(response.toString())).readObject();
-
-            // Navigate to extraProperties.childResources
-            JsonObject extraProps = json.getJsonObject("extraProperties");
-            JsonObject childResources = extraProps.getJsonObject("childResources");
-
-            // Extract keys (JNDI names)
-            JsonArrayBuilder arr = Json.createArrayBuilder();
-            for (String key : childResources.keySet()) {
-                JsonObjectBuilder obj = Json.createObjectBuilder();
-                obj.add("name", key);
-                obj.add("value", key);
-                arr.add(obj);
-            }
-            return Response.ok(arr.build().toString()).build();
+            return Response.ok("[]").build();
 
         } catch (Exception e) {
             e.printStackTrace();
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                     .entity("{\"error\":\"" + e.getMessage() + "\"}")
                     .build();
+        }
+    }
+
+    private JsonObject tryFetchJsonWithAuth(String url, String user, String pass) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+
+            // Pflicht-Header für Payara/GlassFish Management API
+            conn.setRequestProperty("X-Requested-By", "GlassFish REST HTML interface");
+            conn.setRequestProperty("Accept", "application/json");
+
+            // Basic Auth nur setzen, wenn User vorhanden
+            if (user != null && pass != null) {
+                String basicAuth = Base64.getEncoder()
+                        .encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8));
+                conn.setRequestProperty("Authorization", "Basic " + basicAuth);
+            }
+
+            if (conn.getResponseCode() >= 400) {
+                return null;
+            }
+
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line);
+                }
+                String raw = sb.toString();
+                JsonObject response = Json.createReader(new StringReader(raw)).readObject();
+                return response;
+            }
+        } catch (Exception e) {
+            System.err.println(e.getLocalizedMessage());
+            e.printStackTrace();
+            return null;
         }
     }
     
@@ -356,5 +374,50 @@ public class SystemResource {
         
         rob.setStatus(Response.Status.OK);
         return rob.toResponse();
+    }
+    
+    /**
+     * Checks if the given url is reachable
+     *
+     * @param url URL to check reachability
+     * @return true if url is reachable, false otherwise
+     */
+    private boolean isReachable(String url) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+
+            int code = conn.getResponseCode();
+            return code == HttpURLConnection.HTTP_OK;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    private JsonArray processManagementJson(JsonObject json) {
+        JsonObject extraProps = json.getJsonObject("extraProperties");
+        JsonObject childResources = extraProps.getJsonObject("childResources");
+
+        JsonArrayBuilder arr = Json.createArrayBuilder();
+
+        for (String key : childResources.keySet()) {
+            JsonObjectBuilder obj = Json.createObjectBuilder();
+            obj.add("name", key);
+            obj.add("value", key);
+
+            String smartdataUrl = "http://localhost:8080/" + key + "/smartdata/system/info";
+
+            if (isReachable(smartdataUrl)) {
+                obj.add("type", "SmartData");
+            } else {
+                obj.add("type", "Unknown");
+            }
+
+            arr.add(obj);
+        }
+
+        return arr.build();
     }
 }
